@@ -1,0 +1,128 @@
+---
+title: "Otter Sound Analysis Workflow"
+author: "Zhi Yi"
+output:
+  html_document:
+    toc: true
+
+---
+# Introduction
+This document presents an introduction and workflow to the sound analyis of otters. This workflow is still a work-in-progress and any comments/amendments are of course welcomed.
+```{r, include = FALSE}
+library(knitr)
+
+```
+
+
+# Converting Video to Audio
+Generally any video to audio converter would work. However, be sure to convert to audio files of file type **.wav**. This is the usual file type that audio analysis software use.
+
+For reference's sake, I used the AoA audio extractor. It can be downloaded [here](http://www.aoamedia.com/audioextractor.htm)
+
+# Getting to data used for clustering
+Here, we present the steps taken to convert the audio files you have into data representing the properties of the otter calls, which can then be used for further cluster analysis. 
+
+## WarbleR
+To extract calls from the sound files, we use the package `warbleR` in R. First install and load up the libraries 
+```{r, message = FALSE}
+library(warbleR)
+```
+
+## Working directory
+The **.wav** files will need to be in the working directory. I usually put all the **.wav** files together, and use the following function to bring them into R. You might need to play around with the working directories a little bit to see what works best for you 
+```{r, eval = FALSE}
+sound.files <- list.files(pattern = "wav$")
+```
+
+After importing all the sound files into R, depending on what you want to do, you can either 
+
+  - Subset a section of the sound files and do some test/play around with that
+  - Or jump straight in and try to extract all the vocalizations from all your sound files 
+
+## Extracting vocalizations
+It might be good to subset a section of the sound files and test with that first, as most of the functions are quite computational-intensive and takes quite some time to run. Hence, it'll be good to be sure that your function is working before implementing it on the whole dataset. To subset a portion of the sound files randomly, I use the function `sample`
+```{r, eval = FALSE}
+sound.file.sample <- sound.files[sample(1:456, 20, replace = FALSE)]
+# Note that the parameters should be changed before use 
+```
+
+The parameters should be changed to fit 
+
+1) the number of sound files you have, and 
+2) how many samples you want
+
+Now, we can extract the vocalizations from the sound files using the `autodetec` function from `warbleR`
+
+```{r, eval = FALSE}
+autodetec.output <- autodetec(flist = sound.file.sample, ssmooth = 350, power = 1,
+                             bp = c(3, 13), ls = TRUE, wl = 1024, 
+                             flim = c(0,18), mindur = 0.05, maxdur = 0.5)
+```
+
+## Extracting Call parameters
+To extract the properties of the call (i.e frequency, duration), we use the function `specan` from `warbleR`
+```{r, eval = FALSE}
+call.features <- specan(autodetec.output)
+```
+
+
+For more details on warbleR, see the vignettes [Phase 1](https://cran.r-project.org/web/packages/warbleR/vignettes/warbleR_workflow_phase1.html), [Phase 2](https://cran.r-project.org/web/packages/warbleR/vignettes/warbleR_workflow_phase2.html), [Phase 3](https://cran.r-project.org/web/packages/warbleR/vignettes/warbleR_workflow_phase3.html) and the [reference manual](https://cran.r-project.org/web/packages/warbleR/warbleR.pdf)
+
+## Cleaning the calls detected
+However, it is worthwhile to note that the`autodetec` function does not necessarily work very well (especially with more complex calls such as the otters'). Hence, they generally require some manual labour to clean through and make sure that the function is picking up on the correct calls. Luckily, part of this can be automated using R as well. 
+
+To do so, we will make use of machine learning algorithmns which can help us to reduce the number of calls we have to manually look through. The `caret` package in R is useful for tasks like this. 
+```{r, echo = FALSE}
+library(caret)
+```
+
+Given the task we want to go through, the Random Forest model should work best for us.
+A detailed workflow is presented in [Ross, J. C., & Allen, P. E. (2014). Random Forest for improved analysis efficiency in passive acoustic monitoring. Ecological Informatics, 21, 34-39](https://doi.org/10.1016/j.ecoinf.2013.12.002). For our purpose, we will only present the implementation of it in R.
+
+We need to make sure that all the features do not contain any `NA`. Hence, we use the function `na.omit`
+```{r, eval = FALSE}
+call.features <- na.omit(call.features)
+```
+
+After that, we need to partition the data into training and test datasets. 
+```{r, eval = FALSE}
+# We first need to create a unique identifier for each call 
+# that autodetec has picked up
+call.features$ID <- seq_len(nrow(call.features))
+indices <- createDataPartition(call.features$ID, 
+                               p = 0.3 # 30% training data, 70% test data
+                               # list = false returns a vector
+                               list = FALSE)
+train <- autodetec.output[indices, ]
+test <- autodetec.output[-indices, ]
+```
+
+Before we can proceed, we need to manually look through the spectrograms in the **train** data and classify them according to whether they are calls or not. What I did was to write the data as a csv file, classify them manually (by looking through the spectrograms/listening to them), and reimported them back into R. You are welcomed to find the best way for you. 
+
+Once you've done that, you should have a column within your *call.features* dataset that is either **Y/N** or **1/0** to denote whether the detected output is indeed a call or not. Let's call this column **accuracy** within the *call.features dataset*. We can now use the algorithmn to help us classify the rest of the **test** dataframe. 
+```{r, eval = FALSE}
+set.seed(123) # Ensuring that results are replicable
+control <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+# The first argument contains that dataset that you want to
+# train the model with. Note that data that does not describe the 
+# call (such as the name of the audio clip, the ID, etc.) should 
+# not be included
+rf.model <- train(train[, 3:31], 
+                  # The second function is the accuracy column
+                  train[, 32], 
+                  method = "rf", trControl = control)
+rf.predictions <- predict(rf.model, newdata = test[, 3:31])
+```
+
+*rf.predictions* should now contain a vector of either **Y/N** or **1/0** depending on what you used for the training data. These represent the predictions generated from the algorithmn. Refer to paper stated above for the full workflow of this portion.
+```{r}
+library(knitr) # Used for formatting output later on
+# Attaching the predictions to the original test data that were used
+test.predicted <- data.frame(rf.predictions, test.features)
+head(kable(test.predicted[1:5]), 10)
+```
+To ensure that there are no **false positives** in the predicted data, it is advisable to manually look through all data points which the algorithmn predicted as real calls (*those that were turned as Y in rf.predictions*).
+
+After checking through and identifying all the real calls, we can then use the `specan` function to extract the parameters of the call for further analysis. 
+
+Now that we have extracted the properties of the otter calls, we can move on to try and cluster these calls.

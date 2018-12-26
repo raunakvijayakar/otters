@@ -1,0 +1,108 @@
+---
+title: "Otter Sound Analysis Clustering Workflow"
+author: "Zhi Yi"
+output:
+  html_document:
+    TOC: yes
+    toc: yes
+---
+```{r, echo = FALSE}
+library(knitr)
+library(rmarkdown)
+```
+
+# Clustering the otter calls
+
+Now that we have succesfully cleaned up and identified all the real otter calls, we can move on to try to cluster them into different groups and then describe those groups. Here a brief overview of the clustering methods are presented. 
+
+## Manually Separating Calls
+
+What we have found so far is that the clustering algorithmn we are using (*k-medoids clustering* - more on that later) does not work very well when there are large variances within the data. This is especially so when there are small differences within group of calls (termed a *homology*), and big differences amongst these groups (or *homologies*). Hence, before we cluster the calls using algorithmns, we need to separate the data into these 3 data homologies. Unfortunately, we have not found a way to do this automatically, and hence the sorting needs to be done manually. 
+
+### The 3 Homologies
+
+After looking through the data, we found 3 rather distinct homologies. We are currently still looking for ways to describe these homologies in more a *objective* manner (using the properties of the calls), but here is a way to distinguish between the homologies and their respective spectrograms. 
+
+```{r, echo = FALSE, fig.align= 'center', fig.asp = 1}
+include_graphics("Spectrograms/Crystal_19_May_SR_6_-_11.wav-1.png")
+```
+The first one, with the spectrogram as shown above consists of a single flat syllable. The calls within this homology are relatively flatter compared to the other homologies.
+
+```{r, echo = FALSE, fig.align= 'center', fig.asp = 1}
+include_graphics("Spectrograms/Crystal_2_June_PR13-2.wav-1.png")
+```
+The second one, as shown here, has a more marked variation in frequency within the call, and generally has one peak within the call. This peak can be at the start of the call, or at the end of the call. 
+
+```{r, echo = FALSE, fig.align= 'center', fig.asp = 1}
+include_graphics("Spectrograms/IMG_2106-45.wav-1.png")
+```
+The third homology shown here has multiple harmonics and sounds more like either a whine or a growl. This homology also differs significantly from the other 2. 
+
+## Clustering with the k-medoids algorithmn
+The algorithmn that we are using to cluster the calls within each homology is called the k-medoids algorithmn. For more details on the algorithmn, refer to this [here.](http://www.sthda.com/english/articles/27-partitioning-clustering-essentials/88-k-medoids-essentials/)
+
+To get a basic understanding of why we are using this algorithmn, it would also be useful to understand the idea of **Euclidean distance**. More information on that can be found in this [link.](http://www.analytictech.com/borgatti/proximit.htm)
+
+Here is an example of the implementation of the clustering for our case. Since we are working with a sample dataset, it is reasonable to stick to the k-medoids clustering algorithmn. The algorithmn we are going to use specifically is the *PAM algorithmn*.
+
+In the future when there might be larger datasets to work with, we can use the *CLARA* method of clustering, which is an application of the k-medoids clustering to big datasets. More details on *CLARA* clustering can be found [here.](http://www.sthda.com/english/articles/27-partitioning-clustering-essentials/89-clara-clustering-large-applications/#clara-concept)
+
+### Implementation
+We will use the dataset `manual.cluster.1.subset` as our example. This dataframe contains calls belonging to one homology of a sample dataset, with variables that are not properties of calls (such as file name) already removed. 
+```{r}
+# Let's have a look at the data
+kable(head(manual.cluster.1.subset[1:5]))
+```
+
+In order to not skew the different the clustering algorithmn to favour one variable over another, we need to standardize the dataset. We do this using the `scale` function.
+```{r}
+standard.1 <- scale(manual.cluster.1.subset)
+```
+
+Since the k-medoid clustering algorithmn requires the *number of clusters* as an input to the function, we use the `factoextra` package that will give us the number of clusters within our data. We use the **Silhouette Index** to find the number of clusters.
+```{r}
+library(factoextra)
+library(cluster)# First load up the libraries
+clustersdb.1 <- fviz_nbclust(standard.1, pam, method = "silhouette") #PAM is the clustering method we are using
+print(clustersdb.1)
+```
+
+In this case, the algorithmn show that there are **4** clusters within our dataset. 
+
+We will thus use this number of clusters for the next step. 
+
+```{r}
+pam.1 <- pam(x = standard.1, k = 4, metric = "euclidean", stand = FALSE)
+print(pam.1)
+```
+
+## Visualizing the results
+After conducting the clustering, we now move on to visualizing the results from the clustering. 
+
+### Implementation
+
+The object `pam.1` contains all the individual cluster numbers that have been assigned to each call. Let's first add that into our dataframe.
+```{r}
+pam.data.1 <- cbind(cluster = pam.1$clustering, standard.1)
+```
+
+After which, we do a Linear Discriminant Analysis on `pam.data.1` in order to obtain the x & y axes on which to plot our plot on. 
+```{r, warning = FALSE, message = FALSE}
+library(MASS)
+LDA.pam <- lda(formula = cluster ~ ., data = data.frame(pam.data.1))
+# Getting coordinates on the 2 LD axes
+coord.pam <- standard.1 %*% LDA.pam$scaling
+coord.pam <- data.frame(pam.1$clustering, coord.pam)
+```
+
+Finally, plotting the clusters
+```{r}
+ggplot(coord.pam, aes(LD1, LD2)) + 
+  geom_point(aes(colour = pam.1.clustering)) + 
+  scale_color_gradientn(colours = rainbow(4), name = "Clusters")
+```
+
+From here, we can see that in this case, the clusters are relatively well defined. The last step would then be to match these clusters to the calls to see if the different clusters match up well to different types of calls. 
+
+## Model Validation 
+To be added... 
