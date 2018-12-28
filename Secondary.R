@@ -34,7 +34,6 @@ length(spectral_output$selec) #and 335 observations
 #Removal is unnecessary for the first classifier in Prelim, 
 #as we have used a lasso method, whereby only useful variables are kept (Hastie et al. 2017).
 spearman_matrix <- cor(spectral_output[, -c(1:3)], method = "spearman")
-View(spearman_matrix)
 #We see that temporal and frequency variables are positively correlated to each other.
 #Skew and kurtosis as well. However, few are greater than r = 0.9.
 #If we perform principal component analysis, we can summarize the data, and reduce redundancies.
@@ -80,19 +79,72 @@ set.seed(123)
 scramble <- spectral_output[sample(nrow(spectral_output), nrow(spectral_output), replace = F), ]
 pca_trainset <- scramble[1:201, -(1:3)]
 pca_testset <- scramble[202:335, -(1:3)]
+pca <- prcomp(pca_trainset, scale. = T)
+pca_var <- (pca$sdev)^2
+prop_var <- pca_var/sum(pca_var)
+plot(cumsum(prop_var), xlab = "Principal Component", ylab = "Cumulative Proportion of Variance Explained", type = "b")
+View(cumsum(prop_var))
+#using the first 15 components provides 98% of the variance, with roughly half the variables
+View(pca$x)
+#now, we can use this as a prior to the initial call identification model.
+
+set.seed(123)
+setwd("~/Desktop/YNC/Otter:Bat Stuff/Unknowns")
+sound.files <- list.files(pattern = "wav$")
+sound.file.sample <- sound.files
+autodetec.output <- autodetec(flist = sound.file.sample, ssmooth = 350, power = 1,
+                              bp = c(3, 13), ls = TRUE, wl = 1024, 
+                              flim = c(0, 18), mindur = 0.05, maxdur = 0.5) # 34 min runtime :(
+call.features <- specan(autodetec.output)
+call.features <- na.omit(call.features)
+pca_call <- prcomp(call.features[, -(1:2)], scale. = T)
+pca_call_var <- (pca_call$sdev)^2
+prop_call_var <- pca_call_var/sum(pca_call_var)
+plot(cumsum(prop_call_var), xlab = "Principal Component", ylab = "Cumulative Proportion of Variance Explained", type = "b")
+View(cumsum(prop_call_var))
+#Taking the first 14 components gives 97.8% of the variance.
+
+#the section below is just so we can test the model
+set.seed(123)
+call.features.man <- call.features
+call.features.man <- call.features.man[sample(1:nrow(call.features.man), 20, replace = F), ]
+call.features.man$ID <- seq_len(nrow(call.features.man))
+call.features.man$accuracy <- as.factor(c(0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0))
+
+set.seed(123)
+indices <- createDataPartition(call.features.man$ID, p = 0.4, list = FALSE)
+train <- call.features.man[indices, ]
+test <- call.features.man[-indices, ]
+
+#selecting new data with pca
+pca_out <- pca_call$x
+train_new <- data.frame(train$accuracy, pca_out[rownames(pca_out) %in% rownames(train), ])
+test_new <- data.frame(test$accuracy, pca_out[rownames(pca_out) %in% rownames(test), ])
+#LEAVING NOTE: when you come back, pick the columns for training and testing glm
+train_new <- train_new[, 1:15]
+test_new <- test_new[, 2:15]
 
 
+control <- trainControl(method = "LOOCV", number = 10, repeats = 5)
+glm.model <- train(train_new[, -1], 
+                   # The second function is the accuracy column
+                   train_new[, 1], 
+                   method = "glmnet", tuneLength = 12, trControl = control)
+
+#perhaps we use LDA or QDA or something like that...
+
+glm.predictions <- predict(glm.model, newdata = test_new)
+
+1-sum(glm.predictions == test$accuracy)/nrow(test) #test error rate
+
+#consider though that the accuracy here does not need to be great if hdbscan can filter noise calls
+#ideally though, i would have maybe 50-100 identified calls and not calls to properly train the model
 
 
+#HDBSCAN
 
 
-
-
-
-
-
-
-
+1
 
 
 
