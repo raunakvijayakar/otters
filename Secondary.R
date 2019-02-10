@@ -15,6 +15,7 @@ library(ggplot2)
 library(mclust)
 library(dbscan)
 
+
 #Here I am just working on selecting columns from spectral 
 #analysis results to reduce collinearity. 
 #This can be added before the call identification classifier. 
@@ -86,6 +87,7 @@ plot(cumsum(prop_var), xlab = "Principal Component", ylab = "Cumulative Proporti
 View(cumsum(prop_var))
 #using the first 15 components provides 98% of the variance, with roughly half the variables
 View(pca$x)
+pcs <- data.frame(pca$x)
 #now, we can use this as a prior to the initial call identification model.
 
 set.seed(123)
@@ -111,6 +113,12 @@ call.features.man <- call.features.man[sample(1:nrow(call.features.man), 20, rep
 call.features.man$ID <- seq_len(nrow(call.features.man))
 call.features.man$accuracy <- as.factor(c(0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0))
 
+#This is where I will select another 20-30 calls to manually check through, and add to the previous set
+
+
+
+
+
 set.seed(123)
 indices <- createDataPartition(call.features.man$ID, p = 0.4, list = FALSE)
 train <- call.features.man[indices, ]
@@ -131,21 +139,229 @@ glm.model <- train(train_new[, -1],
                    train_new[, 1], 
                    method = "glmnet", tuneLength = 12, trControl = control)
 
-#perhaps we use LDA or QDA or something like that...
-
 glm.predictions <- predict(glm.model, newdata = test_new)
 
 1-sum(glm.predictions == test$accuracy)/nrow(test) #test error rate
 
-#consider though that the accuracy here does not need to be great if hdbscan can filter noise calls
+#Consider that the accuracy here does not need to be great if hdbscan can filter noise calls
 #ideally though, i would have maybe 50-100 identified calls and not calls to properly train the model
 
 
-#HDBSCAN
+#HDBSCAN examples from dbscan vignette
+data("moons")
+plot(moons, pch = 20)
+cl <- hdbscan(moons, minPts = 5)
+cl
+plot(moons, col=cl$cluster+1, pch = 20)
+plot(cl$hc, main = "Dendrogram")
+plot(cl, show_flat = T)
+
+data("DS3")
+plot(DS3, pch = 20)
+cl2 <- hdbscan(DS3, minPts = 25)
+plot(DS3, col=cl2$cluster+1, 
+     pch=ifelse(cl2$cluster == 0, 8, 1), # Mark noise as star
+     cex=ifelse(cl2$cluster == 0, 0.5, 0.75), # Decrease size of noise
+     xlab=NA, ylab=NA)
+colors <- sapply(1:length(cl2$cluster), 
+                 function(i) adjustcolor(palette()[(cl2$cluster+1)[i]], alpha.f = cl2$membership_prob[i]))
+points(DS3, col=colors, pch=20)
+
+plot(cl2, show_flat = T)
+
+#HDBSCAN applied to ZY's data
+hdb_data <- na.omit(spectral_output[spectral_output$Manual.Cluster == 1, -(1:3)]) #selecting clean calls
+
+hdb <- hdbscan(hdb_data, minPts = 15)
+hdb
+plot(hdb, show_flat = T)
+#concurs with ZY's manual selection of 2 clusters, but finds a lot of noise
+plot(hdb$hc)
+vis_data <- cbind(cluster = hdb$cluster, hdb_data)
+lda.fit <- lda(cluster ~ ., data = vis_data)
+coord.hdb <- as.matrix(hdb_data) %*% lda.fit$scaling
+coord.hdb <- data.frame(hdb$cluster, coord.hdb)
+
+ggplot(coord.hdb, aes(LD1, LD2)) + 
+  geom_point(aes(colour = hdb$cluster)) + 
+  scale_color_gradientn(colours = rainbow(3), name = "Clusters")
+
+plot(coord.hdb$LD1, coord.hdb$LD2, col=hdb$cluster+1, 
+     pch=ifelse(hdb$cluster == 0, 8, 1), # Mark noise as star
+     cex=ifelse(hdb$cluster == 0, 0.5, 0.75), # Decrease size of noise
+     xlab="LD1", ylab="LD2")
+
+pairs(hdb_data, col = hdb$cluster+1) #scatterplot matrix
+plot(hdb_data$skew, hdb_data$meandom, col = hdb$cluster+1) #close to a clear clustering in spectral vars
+#it's ok to have a selective algorithm, at least from data quantity perspective
+
+#HDBSCAN applied directly to the autodetec output, w/o the selection model (since it's not yet been trained on enough data)
+hdb.full_data <- call.features[, -(1:2)]
+hdb.full <- hdbscan(hdb.full_data, minPts = 5)
+hdb.full
+#turns out that it's way too noisy without any prior selection. Thinks it's all noise
+
+#LEAVING NOTE: Consider tsne and pca as ways to visualize the clustering results. 
+#Determine how hdbscan defines noise. 
+#Perhaps ask it to recluster after removing everything it thinks it noise
 
 
-1
 
+
+
+
+
+
+
+library(bclust)
+
+#we will attempt the bayesian cluster on ZY's cleaned data since we know what it tends to look like
+
+
+head(spectral_output)
+b_data <- as.matrix(spectral_output[spectral_output$Manual.Cluster == 1, -c(1:2)])
+#cannot assume replicated data, so no x.id, no labels either
+meansumsq <- meancss(b_data)
+optimfunc <- function(phi) { -loglikelihood(x.mean = meansumsq$mean, x.css = meansumsq$css,
+                    repno = meansumsq$repno, transformed.par = phi, var.select = FALSE)
+}
+xinit.tpar <- optim(rep(0, 5), optimfunc, method = "BFGS")$par
+optimfunc <- function(phi) { -loglikelihood(x.mean = meansumsq$mean, x.css = meansumsq$css,
+                     repno = meansumsq$repno, transformed.par = c(xinit.tpar[1:4], phi))
+}
+x.tpar <- c(xinit.tpar[1:4], optim(rep(0, 2), optimfunc,
+                                   method = "BFGS")$par)
+
+x.labels <- c(names(spectral_output[ , -c(1,2)]))
+
+bclust.obj <- bclust(b_data, transformed.par = x.tpar)
+
+dptplot(bclust.obj, scale = 10, horizbar.plot = TRUE,
+        varimp = imp(bclust.obj)$var, horizbar.distance = 5, dendrogram.lwd = 2)
+
+bclust.obj$var.select
+
+par(mfrow=c(2,1))
+
+plot(bclust.obj$clust.number, bclust.obj$logposterior, type = "b")
+abline(h=max(bclust.obj$logposterior))
+abline(v=obj$clust.number)
+
+plot(spectral_output$meandom, spectral_output$entropy)
+
+#apparently the cut occured at 2428.627. Seems unnecessary
+#so we have the classic situation of a function (log post) that we are maximizing.
+bclust.obj$optim.clustno
+#apparently the optimal number of clusters is 55...
+#The max value does occur at 55, but 
+#we need a function that penalizes increasing clusters in relation to gain in loglik
+#I'm not sure how to do that. It's a more objective way to prevent this kind of madness
+#Rather than me saying that the cluster number should be 5 or whatever.
+#Maybe some kind of percent increase in loglik per added cluster?
+
+ditplot(bclust.obj, xlab = colnames(bclust.obj$data),
+        ylab = bclust.obj$labels, dendrogram.lwd = 1, dendrogram.size = 2,
+        xlab.mar = 3, ylab.mar = 3, image.col = rainbow(20),
+        horizbar.plot = FALSE,
+        horizbar.col = rev(c(heat.colors(5)[-4], "white")),
+        horizbar.distance = 4,varimp = rep(0, ncol(bclust.obj$data)),
+        horizbar.size = 0.5, vertbar = NULL,
+        vertbar.col = rainbow(max(vertbar)),
+        teeth.size = 0.25, plot.width = 10)
+
+bclust.obj$merge
+
+loglikelihood(means$mean, means$css, transformed.par = )
+bayes <- bclust(b_data, transformed.par = )
+
+#run the bayesian clustering on the 4 homologies from
+
+
+library(fpc)
+#here's an idea. Use a hierarchical clusterer, then bootstrap(?) to determine stability of results.
+#I already did a method like that (stability validation, which just cfm pam is best)
+useful <- as.matrix(spectral_output[spectral_output$Manual.Cluster == 1, -c(1:2)])
+matrix <- scale(useful)
+pcenter <- attr(matrix, "scaled:center")  
+pscale <- attr(matrix, "scaled:scale")
+#NOTE: i'm just doing this as proof of concept rn, but I would do the bclust here instead
+d <- dist(matrix, "euclidean")
+fit <- hclust(d, "ward.D")
+plot(fit)
+#let's just say that this shows 4 clusters, bclust would actually tell us, 
+#but if we don't use bclust we can try 
+#thorndike method to choose. For now though, just 4
+rect.hclust(fit, k=4)
+kbest <- 4
+cboot.hclust <- clusterboot(matrix, clustermethod = hclustCBI, method = "ward.D",
+                             k=kbest)
+
+#the clusterboot func has a lot of cluster options, but bclust is not one of them, so if we want it,
+#we'll need to write a custom interface
+groups <- cboot.hclust$result$partition  
+cboot.hclust$bootmean #want this closer to 1
+cboot.hclust$bootbrd
+#for interpretation, see details of clusterboot documentation page
+
+
+
+
+#I think we've finally got it with the following
+library(mclust)
+spectral_output <- read.csv("Manual Cluster Clean Data.csv", header = T)
+mdata <- spectral_output[spectral_output$Manual.Cluster == 1, -c(1:2)]
+#selecting just the first homology that ZY identified, consistent with what we've been doing
+mdata_cut <- data.frame(cbind(mdata$meandom, mdata$entropy))
+colnames(mdata_cut) = c("meandom", "entropy")
+
+#intial clustering
+bayes <- mclustBIC(mdata_cut)
+plot(bayes)
+summary(bayes)
+
+mmod <- Mclust(mdata_cut, x = bayes)
+summary(mmod, parameters = TRUE)
+plot(mmod, what = "classification")
+mmod$classification #who's in each cluster
+#finds 4 clusters, which matches our result from silhouette
+
+#checking if thos clusters contain sub clusters
+clus1 <- mdata[mmod$classification == 1, ]
+bayes1 <- mclustBIC(clus1)
+plot(bayes1)
+summary(bayes1)
+mmod1 <- Mclust(clus1, x = bayes1)
+summary(mmod1, parameters = TRUE)
+mmod1$classification
+#no further cluster
+
+
+clus2 <- mdata[mmod$classification == 2, ]
+bayes2 <- mclustBIC(clus2)
+plot(bayes2)
+summary(bayes2)
+mmod2 <- Mclust(clus2, x = bayes2)
+summary(mmod2, parameters = TRUE)
+mmod2$classification
+#no further cluster
+
+clus3 <- mdata[mmod$classification == 3, ]
+bayes3 <- mclustBIC(clus3)
+plot(bayes3)
+summary(bayes3)
+mmod3 <- Mclust(clus3, x = bayes3)
+summary(mmod3, parameters = TRUE)
+mmod3$classification
+#no further cluster
+
+clus4 <- mdata[mmod$classification == 4, ]
+bayes4 <- mclustBIC(clus4)
+plot(bayes4)
+summary(bayes4)
+mmod4 <- Mclust(clus4, x = bayes4)
+summary(mmod4, parameters = TRUE)
+mmod4$classification
+#no further cluster
 
 
 
