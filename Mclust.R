@@ -15,9 +15,9 @@ summary(bayes)
 mmod <- Mclust(mdata_cut[, -3], x = bayes)
 summary(mmod, parameters = TRUE)
 plot(mmod, what = "classification")
+
 mmod$classification #who's in each cluster
 #finds 4 clusters, which matches our result from silhouette
-
 
 
 #checking if those clusters contain sub clusters
@@ -29,7 +29,6 @@ mmod1 <- Mclust(clus1[, -30], x = bayes1)
 summary(mmod1, parameters = TRUE)
 mmod1$classification
 #no further cluster
-
 
 clus2 <- mdata[mmod$classification == 2, ]
 bayes2 <- mclustBIC(clus2[, -30])
@@ -60,7 +59,62 @@ mmod4$classification
 
 
 
-#extracting calls
+
+#now onto extracting calls and creating spectrograms
+#calculate euclidean distance to determine proximity to central coords
+summary(mmod, parameters = T) #gives center coords
+
+#cluster 1
+clus1$cen <- sqrt((4.373880-clus1$meandom)^2+(0.744392-clus1$entropy)^2)
+centro1 <- clus1[clus1$cen == min(clus1$cen), ]
+centro1 <- spectral_output[spectral_output$index %in% centro1$index, ]
+
+#cluster 2
+clus2$cen <- sqrt((0.1183985-clus2$meandom)^2+(0.7389623-clus2$entropy)^2)
+centro2 <- clus2[clus2$cen == min(clus2$cen), ]
+centro2 <- spectral_output[spectral_output$index %in% centro2$index, ]
+
+#cluster 3
+clus3$cen <- sqrt((0.4249154-clus3$meandom)^2+(0.7569739-clus3$entropy)^2)
+centro3 <- clus3[clus3$cen == min(clus3$cen), ]
+centro3 <- spectral_output[spectral_output$index %in% centro3$index, ]
+
+#cluster 4
+clus4$cen <- sqrt((1.9035132-clus4$meandom)^2+(0.7720732-clus4$entropy)^2)
+centro4 <- clus4[clus4$cen == min(clus4$cen), ]
+centro4 <- spectral_output[spectral_output$index %in% centro4$index, ]
+
+
+
+setwd("~/Desktop/YNC/Otter:Bat Stuff/Raw Audio")
+
+spectro_gen <- function (x) 
+{
+  for (i in 1:length(x)) 
+  {
+    k <- readWave(as.character(x[i]))
+    spectro(k, k@samp.rate, 512, ovlp = 87.5, osc = T, main = as.character(i), flim = c(0, 10))
+  }
+}
+
+#create spectrograms
+spectro_gen(centro1$sound.files)
+spectro_gen(centro2$sound.files)
+spectro_gen(centro3$sound.files)
+spectro_gen(centro4$sound.files)
+
+
+
+
+
+
+
+
+
+
+
+
+#extracting calls [OLD]
 ex1 <- spectral_output[spectral_output$index %in% clus1$index, ]
 ex2 <- spectral_output[spectral_output$index %in% clus2$index, ]
 ex3 <- spectral_output[spectral_output$index %in% clus3$index, ]
@@ -72,16 +126,9 @@ ex2_sample <- ex2[sample(nrow(ex2), 10, replace = F), ]
 ex3_sample <- ex3[sample(nrow(ex3), 10, replace = F), ]
 ex4_sample <- ex4[sample(nrow(ex4), 10, replace = F), ]
 
-spectro_gen <- function (x) 
-{
-  for (i in 1:length(x)) 
-  {
-    k <- readWave(as.character(x[i]))
-    spectro(k, k@samp.rate, 512, ovlp = 87.5, osc = T, main = as.character(i), flim = c(0, 10))
-  }
-}
-setwd("~/Desktop/YNC/Otter:Bat Stuff/Raw Audio") #must go to directory w/ wav files
+
 spectro_gen(ex1_sample$sound.files)
+
 spectro_gen(ex2_sample$sound.files)
 spectro_gen(ex3_sample$sound.files)
 spectro_gen(ex4_sample$sound.files)
